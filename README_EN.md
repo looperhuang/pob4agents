@@ -16,6 +16,8 @@ When it runs into a mechanic it isn't sure about, it checks [PoEDB](https://poed
 
 It gives real upgrade suggestions, automatically builds trade queries around your build's gaps (with instant Gold buyout `--securable` filtering, seller deduplication, and lossless `+20%` quality normalization in PoB) with direct trade links, hunts Timeless Jewel seeds (including Abyss jewels) in seconds, and generates build-aware 0-false-positive T16/T17 map regexes (`pob map-regex`)!
 
+It can also plan free and paid upgrades, each verified in PoB: passive respec swaps (`pob respec`), stat weights for your gear (`pob weights`), the best support-gem set (`pob rank-gems --optimize`), and the best gear combo within a chaos budget (`pob trade upgrade` / `pob trade plan`).
+
 ---
 
 ## How do I install it?

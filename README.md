@@ -19,6 +19,8 @@
 
 甚至几秒就能帮你搜完永恒珠宝（连新的深渊永恒珠宝也支持），还能按构筑机制一键生成 0 误杀的 T16/T17 刷图正则（`pob map-regex`）！
 
+还能帮你规划免费和花钱的提升，每一步都在 PoB 里实算验证：天赋洗点互换（`pob respec`）、装备词缀权重（`pob weights`）、最佳辅助宝石组合（`pob rank-gems --optimize`），以及给定混沌石预算下的最佳装备组合（`pob trade upgrade` / `pob trade plan`）
+
 ---
 
 ## 该怎么安装？

@@ -79,6 +79,9 @@ def rank_refunds(
         ]
         res = run_sweep(worker, variants)
     base = (res.get("baseline") or {}).get("summary") or {}
+    missing = [k for k, wgt in score.items() if wgt and not stat_value(base, k)]
+    if missing:  # every lossPerPoint would be None, ranking nothing in silence
+        raise ValueError(f"Baseline of {', '.join(missing)} is missing or 0; it cannot be scored by percent.")
     by_id = {v.get("name"): v for v in res.get("variants") or []}
     rows = [_refund_row(n, by_id.get(str(n["id"])) or {}, base, score, floors) for n in nodes]
     ranked = [r for r in rows if r.get("refundable") and r.get("lossPerPoint") is not None and not r.get("floorFail")]

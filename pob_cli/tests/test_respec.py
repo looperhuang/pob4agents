@@ -152,3 +152,29 @@ def test_plan_respec_ranks_adds_by_pob_stat_names(build: _Build, monkeypatch: An
     monkeypatch.setattr(respec, "rank_nodes_scored", _adds)
     respec.plan_respec(build, rounds=1)  # type: ignore[arg-type]
     assert seen and all(set(s) <= {"CombinedDPS", "FullDPS", "MinionCombinedDPS", "TotalEHP"} for s in seen)
+
+
+def test_rank_score_ignores_case() -> None:
+    assert respec._rank_score({"totalehp": 1.0, "COMBINEDDPS": 2.0}, "FullDPS") == {"TotalEHP": 1.0, "CombinedDPS": 2.0}
+
+
+def test_plan_respec_only_ranks_adds_the_refund_can_pay_for(build: _Build, monkeypatch: Any) -> None:
+    dists: list[int] = []
+
+    def _adds(w: _Build, *, max_dist: int, **_: Any) -> dict[str, Any]:
+        dists.append(max_dist)
+        return {"byPerPoint": []}
+
+    monkeypatch.setattr(respec, "rank_nodes_scored", _adds)
+    respec.plan_respec(build, rounds=1, max_dist=5)  # type: ignore[arg-type]
+    assert dists and set(dists) == {1}  # one refunded point pays for a 1-point path only
+
+
+def test_plan_respec_surfaces_scoring_errors(build: _Build, monkeypatch: Any) -> None:
+    def _adds(w: _Build, **_: Any) -> dict[str, Any]:
+        raise ValueError("Baseline of EnergyShield is missing or 0")
+
+    monkeypatch.setattr(respec, "rank_nodes_scored", _adds)
+    with pytest.raises(ValueError, match="EnergyShield"):
+        respec.plan_respec(build, rounds=1)  # type: ignore[arg-type]
+    assert build.alloc == {1, 2, 3}  # the transaction still restored the build

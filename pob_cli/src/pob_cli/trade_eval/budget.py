@@ -40,11 +40,17 @@ def collect_listings(payloads: list[dict[str, Any]], score: dict[str, float]) ->
                 skipped += 1
                 continue
             by_slot.setdefault(slot, []).append(
-                {"slot": slot, "name": cand.get("name"), "chaos": float(chaos), "score": value,
+                {"slot": slot, "listingId": cand.get("listing_id"), "name": cand.get("name"), "chaos": float(chaos), "score": value,
                  "perChaos": value / chaos if chaos > 0 else None, "url": cand.get("url"),
                  "dpsPct": (cand.get("pob") or {}).get("dps_pct"), "ehpPct": (cand.get("pob") or {}).get("ehp_pct")}
             )
-    return by_slot, skipped
+    # Ring 1 / Ring 2 searches can return the same listing: keep it once, in the slot where it scores best.
+    best: dict[str, dict[str, Any]] = {}
+    for item in (i for items in by_slot.values() for i in items if i["listingId"]):
+        if item["listingId"] not in best or item["score"] > best[item["listingId"]]["score"]:
+            best[item["listingId"]] = item
+    by_slot = {s: [i for i in items if not i["listingId"] or best[i["listingId"]] is i] for s, items in by_slot.items()}
+    return {s: items for s, items in by_slot.items() if items}, skipped
 
 
 def plan_budget(payloads: list[dict[str, Any]], *, budget: float, score: dict[str, float] | None = None, top: int = 10) -> dict[str, Any]:

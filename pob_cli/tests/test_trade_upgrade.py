@@ -43,6 +43,8 @@ def _cand(name: str, chaos: float, dps: float, ehp: float = 0.0) -> dict[str, An
 
 
 _AMU = {"slot": "amulet", "candidates": [_cand("A-mid", 50, 12.0), _cand("A-cheap", 5, 2.0)]}
+# What a real `trade search --auto-query` saves: PoB's query has stat filters.
+_AMU_Q = {**_AMU, "query": {"query": {"stats": [{"type": "weight", "filters": [{"id": "pseudo.x"}]}]}}}
 _HELM = {"slot": "helmet", "candidates": [_cand("H-big", 40, 8.0)]}
 _RING = {"slot": "ring1", "candidates": [_cand("R-cheap", 10, 5.0)]}
 _ITEMS = {"equippedSlots": [{"slotName": "Helmet", "itemId": 3}, {"slotName": "Amulet", "itemId": 5}, {"slotName": "Gloves", "itemId": 4}]}
@@ -102,7 +104,7 @@ def test_upgrade_json_end_to_end(monkeypatch: Any) -> None:
 
 
 def test_upgrade_skips_failed_slot(monkeypatch: Any) -> None:
-    _patch(monkeypatch, search={"amulet": _AMU, "helmet": RuntimeError("rate limited")})
+    _patch(monkeypatch, search={"amulet": _AMU, "helmet": upgrade_cmd._SlotSearchError("rate limited", 4)})
     out = _run(["trade", "upgrade", "--budget", "100", "--top-slots", "2", "--json"])
     assert out.exit_code == 0, out.output
     data = json.loads(out.output)
@@ -136,13 +138,12 @@ def test_search_slot_invokes_trade_search_with_defaults(monkeypatch: Any) -> Non
 
     def _fake_callback(**kwargs: Any) -> None:
         seen.update(kwargs)
-        Path(kwargs["out_path"]).write_text(json.dumps(_AMU), encoding="utf-8")
+        Path(kwargs["out_path"]).write_text(json.dumps(_AMU_Q), encoding="utf-8")
 
     monkeypatch.setattr(upgrade_cmd.cmd_trade_search, "callback", _fake_callback)
-    monkeypatch.setattr(upgrade_cmd, "_try_auto_trade_query", lambda **_: {"query": {}})
     with click.Context(upgrade_cmd.cmd_trade_upgrade) as ctx:
         data = upgrade_cmd._search_slot(ctx, "amulet", per_slot=3, league=None, proxy=None, target="main")
-    assert data == _AMU
+    assert data == _AMU_Q
     assert seen["slot"] == "amulet" and seen["auto_query"] is True and seen["pob_mode"] == "on" and seen["pob_limit"] == 3
     assert seen["max_results"] == 8 and seen["status"] and seen["as_json"] is True  # defaults filled by click
 
@@ -152,13 +153,21 @@ def test_search_slot_turns_nonzero_exit_into_error(monkeypatch: Any) -> None:
         click.get_current_context().exit(4)
 
     monkeypatch.setattr(upgrade_cmd.cmd_trade_search, "callback", _fake_callback)
-    monkeypatch.setattr(upgrade_cmd, "_try_auto_trade_query", lambda **_: {"query": {}})
-    with click.Context(upgrade_cmd.cmd_trade_upgrade) as ctx, pytest.raises(RuntimeError, match="exited 4"):
+    with click.Context(upgrade_cmd.cmd_trade_upgrade) as ctx, pytest.raises(upgrade_cmd._SlotSearchError, match="exited 4") as err:
         upgrade_cmd._search_slot(ctx, "amulet", per_slot=3, league=None, proxy=None, target="main")
+    assert err.value.exit_code == 4
+
+
+def test_upgrade_exits_with_trade_code_when_every_search_fails(monkeypatch: Any) -> None:
+    _patch(monkeypatch, search={"amulet": upgrade_cmd._SlotSearchError("exited 5", 5),
+                                "helmet": upgrade_cmd._SlotSearchError("exited 4", 4)})
+    out = _run(["trade", "upgrade", "--budget", "100", "--top-slots", "2", "--json"])
+    assert out.exit_code == 4  # rate limit outranks a network error: the agent backs off first
+    assert len(json.loads(out.output)["skippedSlots"]) == 2
 
 
 def test_upgrade_markdown_sections(monkeypatch: Any) -> None:
-    _patch(monkeypatch, search={"amulet": _AMU, "helmet": RuntimeError("rate limited")})
+    _patch(monkeypatch, search={"amulet": _AMU, "helmet": upgrade_cmd._SlotSearchError("rate limited", 4)})
     text = _run(["trade", "upgrade", "--budget", "100", "--top-slots", "2"]).output
     assert "### Upgrade Plan" in text and "- Skipped: helmet (rate limited)" in text
     assert "- Slots searched: Amulet (lowest contribution), Helmet (lowest contribution)" in text
@@ -180,11 +189,12 @@ def _real_search(monkeypatch: Any, *, auto_ok: bool = True) -> None:
     from pob_cli.cli_common import _emit_json
 
     def _fake_callback(**kwargs: Any) -> None:
-        _emit_json(_AMU, out_path=kwargs["out_path"])
+        # Without PoB's query, trade search falls back to a stat-less one.
+        _emit_json(_AMU_Q if auto_ok else {**_AMU, "query": {"query": {"stats": [{"type": "and", "filters": []}]}}},
+                   out_path=kwargs["out_path"])
 
     monkeypatch.setattr(upgrade_cmd.cmd_trade_search, "callback", _fake_callback)
     monkeypatch.setattr(upgrade_cmd, "_search_slot", _REAL_SEARCH_SLOT)
-    monkeypatch.setattr(upgrade_cmd, "_try_auto_trade_query", lambda **_: {"query": {}} if auto_ok else None)
 
 
 def test_upgrade_json_stdout_stays_parseable(monkeypatch: Any) -> None:

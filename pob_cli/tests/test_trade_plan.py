@@ -56,3 +56,13 @@ def test_cmd_trade_plan(tmp_path: Path) -> None:
     assert bad.exit_code == 1
     missing = CliRunner().invoke(main, ["trade", "plan", str(tmp_path / "nope.json"), "--budget", "1"])
     assert missing.exit_code == 1
+
+
+def test_plan_budget_buys_a_listing_once_across_slots() -> None:
+    same = {**_cand("R-shared", 10, 9.0), "listing_id": "abc"}
+    ring1 = {"slot": "Ring 1", "candidates": [same, _cand("R1-other", 10, 2.0)]}
+    ring2 = {"slot": "Ring 2", "candidates": [{**same, "pob": {"dps_pct": 7.0, "ehp_pct": 0.0}}, _cand("R2-other", 10, 3.0)]}
+    res = plan_budget([ring1, ring2], budget=100)
+    # The shared ring stays in Ring 1, where it scores 9; Ring 2 takes its own best.
+    assert sorted((p["slot"], p["name"]) for p in res["picks"]) == [("Ring 1", "R-shared"), ("Ring 2", "R2-other")]
+    assert res["totalChaos"] == 20

@@ -14,6 +14,7 @@ from ..bridge_client import BridgeWorker
 from ..formatters import _parse_numeric_or_none, strip_pob_escapes
 from ..mutators import _BatchCache, _execute_batch_ops
 from ..snapshot import BuildTransaction, capture_digest
+from .rank_scored import _baseline
 from .ranking import rank_gems
 
 _ZERO_CHARGE_CAVEAT = "0 charges on 0-mana skill!"
@@ -21,9 +22,7 @@ _TRIES_PER_SLOT = 3
 
 
 def _field_value(worker: BridgeWorker, field: str) -> float | None:
-    stats = (worker.call("get_stats", {}) or {}).get("stats") or {}
-    val = _parse_numeric_or_none(stats.get(field))
-    return float(val) if val is not None else None
+    return _baseline((worker.call("get_stats", {}) or {}).get("stats") or {}, field)
 
 
 def _support_slots(worker: BridgeWorker, g_idx: int) -> list[dict[str, Any]]:
@@ -85,6 +84,8 @@ def optimize_links(
         if field.lower() == "primary":  # FullDPS / MinionCombinedDPS / CombinedDPS, as the build's digest picks
             field = str(orig_digest.get("primaryDpsKey") or "CombinedDPS")
         before = _field_value(worker, field)
+        if before is None:
+            raise ValueError(f"Stat `{field}` not found in the build's stats; it cannot be optimised.")
         for _ in range(max(1, passes)):
             changed = False
             for slot in _support_slots(worker, g_idx):

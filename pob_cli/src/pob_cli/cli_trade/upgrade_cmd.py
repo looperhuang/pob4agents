@@ -20,20 +20,29 @@ from ..cli_common import _emit_json, _emit_text, _output_options, invoke_daemon
 from ..scoring import parse_score
 from ..trade_eval.budget import DEFAULT_PLAN_SCORE, PLAN_STATS, plan_budget
 from ..trade_eval.upgrade import UPGRADE_SLOTS, rank_weak_slots, unequip_loss
-from ..trade_query import pob_slot_for_slot
 from .common import _TARGET_SLOT_TYPE, _default_target_slot
 from .other_cmds import trade_group
 from .plan_cmd import format_plan_markdown
-from .search_cmd import _try_auto_trade_query, cmd_trade_search
+from .search_cmd import cmd_trade_search
 
 _SUMMARY_STAT = {"dps": "primaryDps", "ehp": "totalEhp"}
+# When every slot search fails, exit with the code an agent must act on first (trade.md exit codes).
+_EXIT_PRIORITY = (4, 3, 5, 6, 2, 1)
+
+
+class _SlotSearchError(RuntimeError):
+    def __init__(self, message: str, exit_code: int = 0) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def _has_stat_filters(payload: dict[str, Any]) -> bool:
+    stats = ((payload.get("query") or {}).get("query") or {}).get("stats") or []
+    return any(isinstance(g, dict) and g.get("filters") for g in stats)
 
 
 def _search_slot(ctx: click.Context, trade_slot: str, *, per_slot: int, league: str | None, proxy: str | None, target: str) -> dict[str, Any]:
     """Run `pob trade search --auto-query --pob on --json` for one slot and return its payload."""
-    # trade search silently falls back to a stat-less cheapest-first query when auto-query fails.
-    if _try_auto_trade_query(pob_slot=pob_slot_for_slot(trade_slot), slot=trade_slot, target=target, league=league) is None:
-        raise RuntimeError("auto-query failed")
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "search.json"
         try:
@@ -45,14 +54,17 @@ def _search_slot(ctx: click.Context, trade_slot: str, *, per_slot: int, league: 
                 )
         except click.exceptions.Exit as exc:
             if exc.exit_code:
-                raise RuntimeError(f"trade search exited {exc.exit_code}") from exc
+                raise _SlotSearchError(f"trade search exited {exc.exit_code}", exc.exit_code) from exc
         except click.ClickException as exc:
-            raise RuntimeError(exc.format_message()) from exc
+            raise _SlotSearchError(exc.format_message(), exc.exit_code) from exc
         if not out.exists():
-            raise RuntimeError("trade search returned no results")
+            raise _SlotSearchError("trade search returned no results")
         data = json.loads(out.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not isinstance(data.get("candidates"), list):
-        raise RuntimeError("trade search returned no candidates")
+        raise _SlotSearchError("trade search returned no candidates")
+    # trade search silently falls back to a stat-less cheapest-first query when auto-query fails.
+    if not _has_stat_filters(data):
+        raise _SlotSearchError("auto-query failed")
     return data
 
 
@@ -162,11 +174,13 @@ def cmd_trade_upgrade(
             chosen = []
             skipped.append({"slot": "*", "error": f"slot probe: {exc.format_message()}"})
     payloads: list[dict[str, Any]] = []
+    codes: set[int] = set()
     for row in chosen:
         try:
             payloads.append(_search_slot(ctx, row["tradeSlot"], per_slot=per_slot, league=league, proxy=proxy, target=target))
-        except RuntimeError as exc:
+        except _SlotSearchError as exc:
             skipped.append({"slot": row["tradeSlot"], "error": str(exc)})
+            codes.add(exc.exit_code)
     res = {
         "budget": budget, "score": score, "slots": chosen,
         "plan": plan_budget(payloads, budget=budget, score=score),
@@ -174,5 +188,7 @@ def cmd_trade_upgrade(
     }
     if as_json:
         _emit_json(res, compact=compact, out_path=out_path)
-        return
-    _emit_text(format_upgrade_markdown(res, target=target), out_path=out_path)
+    else:
+        _emit_text(format_upgrade_markdown(res, target=target), out_path=out_path)
+    if chosen and not payloads:  # every search failed: keep the trade exit-code contract
+        ctx.exit(next((c for c in _EXIT_PRIORITY if c in codes), 0))

@@ -88,8 +88,8 @@ A one-shot **reference** list for "where should the next N chaos go?". It chains
 
 1. **Free moves first**: one round of `pob respec` and one pass of `pob rank-gems --optimize` on the main group, listed apart from the chaos plan.
 2. **Weakest slots**: unless `--slot` is given, empty gear slots come first, then the slots whose item loses the least score when unequipped (a what-if `item unequip` per slot); the first `--top-slots` are searched.
-3. **Live trade**: each slot runs `pob trade search --auto-query --pob on --pob-limit <--per-slot>`. A slot that fails (rate limit, no results) is listed under `skippedSlots` and the rest carry on.
-4. **Plan**: the results go through the same knapsack as `pob trade plan`.
+3. **Live trade**: each slot runs `pob trade search --auto-query --pob on --pob-limit <--per-slot>`. A slot that fails (rate limit, no results, or no PoB query) is listed under `skippedSlots` and the rest carry on. When every searched slot fails, the command still prints its output and then exits with the most urgent trade exit code it saw (`4` before `3`, `5`, `6`, `2`).
+4. **Plan**: the results go through the same knapsack as `pob trade plan`. A listing found for two slots (Ring 1 and Ring 2) is bought once, for the slot where it scores best.
 
 Expect about 1–3 minutes for three slots, mostly trade API rate limits. Nothing is applied to the build, and the plan's total is an estimate (each listing was verified alone).
 

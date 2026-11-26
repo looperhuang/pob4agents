@@ -14,13 +14,10 @@ from ..mutators import _apply_tree_changes_in_place, _compact_sweep_summary
 from ..scoring import Floor, floor_failures, pct_change, stat_keys, stat_value, weighted_score
 from ..snapshot import BuildTransaction, capture_digest
 from .rank_refund import DEFAULT_REFUND_SCORE, rank_refunds
-from .rank_scored import rank_nodes_scored
+from .rank_scored import pob_stat_name, rank_nodes_scored
 
 _REFUND_TRIES_PER_ROUND = 3
 _ADD_TRIES_PER_REFUND = 5
-# Sweep-summary keys whose PoB power-stat name is not the key with its first letter raised ("life" -> "Life").
-_POB_STAT = {"totalEhp": "TotalEHP", "fullDps": "FullDPS", "combinedDps": "CombinedDPS", "totalDps": "TotalDPS",
-             "totalDotDps": "TotalDotDPS", "minionCombinedDps": "MinionCombinedDPS"}
 
 
 def _rank_score(score: dict[str, float], primary_key: str) -> dict[str, float]:
@@ -31,7 +28,7 @@ def _rank_score(score: dict[str, float], primary_key: str) -> dict[str, float]:
     """
     out: dict[str, float] = {}
     for k, wgt in score.items():
-        name = primary_key if k.lower() == "primarydps" else _POB_STAT.get(k, k[:1].upper() + k[1:])
+        name = pob_stat_name(k, primary_key)
         if "MaxHit" not in name and "Resist" not in name and "Chance" not in name and name != "SpellSuppression":
             out[name] = out.get(name, 0.0) + wgt
     return out or {primary_key: 1.0}
@@ -66,7 +63,10 @@ def _try_round(
 ) -> dict[str, Any] | None:
     """Deallocate `refund`, then try the best adds; leaves the swap applied only when it is returned."""
     rid = int(refund["id"])
-    _apply_tree_changes_in_place(w, [], [(rid, None)], allow_cascade=False)
+    try:
+        _apply_tree_changes_in_place(w, [], [(rid, None)], allow_cascade=False)
+    except ValueError:
+        return None  # cascade-blocked: try the next refund; scoring errors still reach the caller
     mid = tx.checkpoint()
     try:
         return _try_adds(w, tx, mid, refund, banned=banned, used_before=used_before, before_sum=before_sum,
@@ -90,8 +90,11 @@ def _try_adds(
 ) -> dict[str, Any] | None:
     rid = int(refund["id"])
     rank_score = _rank_score(score, str(before_sum.get("primaryDpsKey") or "CombinedDPS"))
+    # An add must fit in the points the refund freed, or the points check below always rejects it.
+    freed = max(1, int(refund.get("pointsRefunded") or 1))
     # Floors are checked on the applied swap below, not on the per-stat engine estimate.
-    adds = rank_nodes_scored(w, score=rank_score, floors=[], max_dist=max_dist, top=_ADD_TRIES_PER_REFUND * 3)["byPerPoint"]
+    adds = rank_nodes_scored(w, score=rank_score, floors=[], max_dist=min(max_dist, freed),
+                             top=_ADD_TRIES_PER_REFUND * 3)["byPerPoint"]
     tried = 0
     for add in adds:
         aid = int(add["id"])
@@ -142,11 +145,8 @@ def plan_respec(
                 if int(refund["id"]) not in alloc:
                     continue
                 tries += 1
-                try:
-                    result = _try_round(worker, tx, refund, banned=banned, used_before=used_before, before_sum=final_sum,
-                                        score=score, floors=floors, max_dist=max_dist)
-                except ValueError:
-                    result = None
+                result = _try_round(worker, tx, refund, banned=banned, used_before=used_before, before_sum=final_sum,
+                                    score=score, floors=floors, max_dist=max_dist)
                 if result is None:
                     tx.restore(round_cp)
             tx.drop(round_cp)

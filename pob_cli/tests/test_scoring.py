@@ -252,3 +252,24 @@ def test_rank_nodes_refund_rejects_stat_and_max_dist(monkeypatch: Any) -> None:
     for extra in (["--stat", "Life"], ["--max-dist", "3"]):
         r = CliRunner().invoke(main, ["rank-nodes", "--refund", *extra])
         assert r.exit_code == 2 and "--refund" in r.output
+
+
+def test_rank_nodes_scored_takes_summary_names(monkeypatch: Any) -> None:
+    from pob_cli.comparator import rank_scored
+
+    monkeypatch.setattr(rank_scored, "capture_digest", lambda _w: {"primaryDpsKey": "CombinedDPS"})
+    w = _ScoredNodeWorker()
+    res = comparator.rank_nodes_scored(  # type: ignore[arg-type]
+        w, score={"primaryDps": 1.0, "totalehp": 0.5}, floors=[("totalEhp", ">=", 9000.0)], max_dist=5, top=10
+    )
+    assert w.stats_called == ["CombinedDPS", "TotalEHP"]
+    assert [r["name"] for r in res["byTotalGain"]] == ["Dmg", "Life"]
+
+
+def test_rank_refunds_rejects_zero_baseline(monkeypatch: Any) -> None:
+    from pob_cli.comparator import rank_refund
+
+    monkeypatch.setattr(rank_refund, "run_sweep", lambda _w, _v, **_: {
+        "baseline": {"summary": {"primaryDps": 1000, "energyShield": 0}}, "variants": []})
+    with pytest.raises(ValueError, match="energyShield is missing or 0"):
+        comparator.rank_refunds(_RefundWorker(), score={"primaryDps": 1.0, "energyShield": 0.5})  # type: ignore[arg-type]

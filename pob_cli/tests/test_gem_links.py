@@ -119,3 +119,9 @@ def test_cmd_rank_gems_optimize_rejects_slot_and_top(monkeypatch: Any) -> None:
     for extra in (["--slot", "2"], ["--add-link"], ["--top", "3"]):
         r = CliRunner().invoke(main, ["rank-gems", "--optimize", *extra])
         assert r.exit_code == 2 and "--optimize" in r.output
+
+
+def test_optimize_links_field_ignores_case_and_rejects_unknown(group: _Group) -> None:
+    assert gem_links.optimize_links(group, field="combineddps")["after"] > 1000.0  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="`Bogus` not found"):
+        gem_links.optimize_links(group, field="Bogus")  # type: ignore[arg-type]

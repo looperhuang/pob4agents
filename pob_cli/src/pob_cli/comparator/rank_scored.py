@@ -7,12 +7,27 @@ from typing import Any
 from ..bridge_client import BridgeWorker
 from ..formatters import _parse_numeric_or_none, strip_pob_escapes
 from ..scoring import Floor, floor_failures, pct_change, stat_keys, weighted_score
+from ..snapshot import capture_digest
 from .ranking import _detect_equipped_weapon_types, _node_weapon_mastery_kind, _safe_dist, _safe_float
+
+# Sweep-summary keys whose PoB power-stat name is not the key with its first letter raised ("life" -> "Life").
+_POB_STAT = {"totalehp": "TotalEHP", "fulldps": "FullDPS", "combineddps": "CombinedDPS", "totaldps": "TotalDPS",
+             "totaldotdps": "TotalDotDPS", "minioncombineddps": "MinionCombinedDPS"}
+
+
+def pob_stat_name(key: str, primary_key: str) -> str:
+    """PoB `node_power` stat name for a sweep-summary or PoB key, ignoring case (`totalehp` -> `TotalEHP`)."""
+    low = key.lower()
+    if low == "primarydps":
+        return primary_key
+    return _POB_STAT.get(low, key[:1].upper() + key[1:])
 
 
 def _baseline(stats: dict[str, Any], key: str) -> float | None:
     low = key.lower()
     raw = stats.get(key, next((v for k, v in stats.items() if str(k).lower() == low), None))
+    if raw is None:
+        return None  # _parse_numeric_or_none reads a missing stat as 0
     val = _parse_numeric_or_none(raw)
     return float(val) if val is not None else None
 
@@ -35,8 +50,16 @@ def rank_nodes_scored(
     top: int = 15,
 ) -> dict[str, Any]:
     """Rank unallocated nodes by the weighted % gain over several stats, dropping nodes that break a floor."""
-    keys = stat_keys(score, floors)
     with worker.lock:
+        # Summary names (`primaryDps`, `totalEhp`, as `--refund` takes) map to PoB stat names here.
+        primary = "CombinedDPS"
+        if any(k.lower() == "primarydps" for k in stat_keys(score, floors)):
+            primary = str(capture_digest(worker).get("primaryDpsKey") or "CombinedDPS")
+        named: dict[str, float] = {}
+        for k, wgt in score.items():
+            named[pob_stat_name(k, primary)] = named.get(pob_stat_name(k, primary), 0.0) + wgt
+        score, floors = named, [(pob_stat_name(k, primary), op, lim) for k, op, lim in floors]
+        keys = stat_keys(score, floors)
         st = worker.call("get_stats", {})
         stats = (st.get("stats") if isinstance(st, dict) else None) or {}
         base = {k: _baseline(stats, k) for k in keys}
